@@ -1,34 +1,90 @@
-name: Auto-merge weekly reading
- 
+name: Auto-merge and email weekly reading
+
 on:
   push:
     branches:
-      - "claude/**"      # fires only when the Routine pushes its branch
- 
+      - "claude/**"      # fires when the Routine pushes its weekly branch
+
 permissions:
-  contents: write        # allows the workflow to push to main
- 
+  contents: write        # allows pushing the merge to main
+
 jobs:
-  merge:
+  merge-and-email:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0           # need full history to merge across branches
- 
+          fetch-depth: 0
+
       - name: Merge the pushed branch into main
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
- 
-          # The branch that triggered this run (e.g. claude/relaxed-wozniak-4axo4z)
           BRANCH="${GITHUB_REF_NAME}"
- 
-          # Get main locally and merge the branch into it
           git checkout -B main origin/main
           git merge --no-ff "origin/${BRANCH}" -m "Auto-merge weekly reading from ${BRANCH}"
           git push origin main
- 
-          # Clean up the now-merged branch so they don't pile up
           git push origin --delete "${BRANCH}"
- 
+
+      - name: Build email body from the newest CSV row
+        id: build
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import csv, os
+
+          REPO = os.environ["GITHUB_REPOSITORY"]          # e.g. you/weekly-sport-reading
+          FILE_PATH = "data/weekly_reading.csv"
+          FILE_URL = f"https://github.com/{REPO}/blob/main/{FILE_PATH}"
+
+          with open(FILE_PATH, newline="", encoding="utf-8") as f:
+              rows = list(csv.DictReader(f))
+
+          if not rows:
+              print("subject=Weekly Sport Science and Sport Analytics Reading")
+              print("body<<EOF")
+              print(f'<p>The reading log was updated but contains no rows yet. '
+                    f'<a href="{FILE_URL}">View the file</a>.</p>')
+              print("EOF")
+              raise SystemExit(0)
+
+          r = rows[-1]   # newest row
+
+          def block(title, url, summary):
+              if not title or title.strip().upper() == "NONE":
+                  return '<p style="margin:0 0 20px 0;color:#666;">No qualifying item this week.</p>'
+              link = (f'<a href="{url}" style="font-weight:bold;color:#0b3d91;'
+                      f'text-decoration:none;">{title}</a>') if url else f"<b>{title}</b>"
+              return (f'<p style="margin:0 0 4px 0;">{link}</p>'
+                      f'<p style="margin:0 0 20px 0;">{summary}</p>')
+
+          paper = block(r.get("Paper Title",""), r.get("Paper URL",""), r.get("Paper Summary",""))
+          tool  = block(r.get("Analytics Title",""), r.get("Analytics URL",""), r.get("Analytics Summary",""))
+
+          html = (
+              '<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;'
+              'line-height:1.5;color:#222;">'
+              f'<p style="color:#666;margin:0 0 20px 0;">Week of {r.get("Date","")}</p>'
+              f'{paper}{tool}'
+              f'<hr style="border:none;border-top:1px solid #eee;margin:20px 0;">'
+              f'<p style="font-size:13px;color:#888;">'
+              f'Full reading log: <a href="{FILE_URL}">{FILE_PATH}</a></p>'
+              '</div>'
+          )
+
+          print("subject=Weekly Sport Science and Sport Analytics Reading")
+          print("body<<EOF")
+          print(html)
+          print("EOF")
+          PY
+
+      - name: Send the email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: ${{ steps.build.outputs.subject }}
+          to: ${{ secrets.RECIPIENTS }}
+          from: ${{ secrets.SMTP_USER }}
+          html_body: ${{ steps.build.outputs.body }}
