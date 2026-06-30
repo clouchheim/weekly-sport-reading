@@ -1,0 +1,34 @@
+name: Auto-merge weekly reading
+ 
+on:
+  push:
+    branches:
+      - "claude/**"      # fires only when the Routine pushes its branch
+ 
+permissions:
+  contents: write        # allows the workflow to push to main
+ 
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0           # need full history to merge across branches
+ 
+      - name: Merge the pushed branch into main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+ 
+          # The branch that triggered this run (e.g. claude/relaxed-wozniak-4axo4z)
+          BRANCH="${GITHUB_REF_NAME}"
+ 
+          # Get main locally and merge the branch into it
+          git checkout -B main origin/main
+          git merge --no-ff "origin/${BRANCH}" -m "Auto-merge weekly reading from ${BRANCH}"
+          git push origin main
+ 
+          # Clean up the now-merged branch so they don't pile up
+          git push origin --delete "${BRANCH}"
+ 
